@@ -1,4 +1,4 @@
-[![Build Status](https://drone.io/github.com/Intermernet/pw/status.png)](https://drone.io/github.com/Intermernet/pw/latest)
+[![Build Status](https://drone.io/github.com/Intermernet/pa/status.png)](https://drone.io/github.com/Intermernet/pa/latest)
 
 __pa - Port Authority__
 
