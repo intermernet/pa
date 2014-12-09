@@ -1,4 +1,4 @@
-// pa - Port Authority - controls port assignments, ensures uniqueness
+// pa - Port Authority - controls port assignments, ensures port uniqueness
 // Copyright 2014 Mike Hughes intermernet AT gmail DOT com
 
 package main
@@ -18,8 +18,9 @@ import (
 )
 
 const (
-	minPort = 9000
-	maxPort = 65536 // TCP/IP Limit + 1
+	minPort  = 9000
+	maxPort  = 65535 // TCP/IP Limit
+	autoPort = maxPort + 1
 )
 
 var (
@@ -38,7 +39,6 @@ var (
 
 type vendor struct {
 	Ports []bool
-	Next  int
 	sync.Mutex
 }
 
@@ -49,31 +49,36 @@ func rangeCheck(port int) error {
 	return nil
 }
 
-func (v *vendor) assign(port int) error {
-	switch {
-	case v.Next == maxPort:
-		return ErrAllPortsAssigned
-	case v.Ports[port-minPort]:
-		return ErrPortAlreadyAssigned
-	default:
-		for n, assigned := range v.Ports[v.Next-minPort+1:] {
-			if !assigned {
-				v.Next = n + v.Next + 1
-				break
-			}
+func (v *vendor) scan() (int, error) {
+	for n, assigned := range v.Ports {
+		if !assigned {
+			return n, nil
 		}
-		v.Ports[port-minPort] = true
-		return nil
 	}
-	return nil
+	return 0, ErrAllPortsAssigned
+}
+
+func (v *vendor) assign(port int) (int, error) {
+	if port <= maxPort && v.Ports[port-minPort] {
+		return 0, ErrPortAlreadyAssigned
+	}
+	if port == autoPort {
+		p, err := v.scan()
+		if err != nil {
+			return 0, err
+		}
+		port = p + minPort
+	}
+	v.Ports[port-minPort] = true
+	return port, nil
 }
 
 func (v *vendor) get() (int, error) {
 	v.Lock()
 	defer v.Unlock()
-	port := v.Next
-	if err := v.assign(port); err != nil {
-		return port, err
+	port, err := v.assign(autoPort)
+	if err != nil {
+		return 0, err
 	}
 	return port, nil
 }
@@ -82,10 +87,11 @@ func (v *vendor) post(port int) (int, error) {
 	v.Lock()
 	defer v.Unlock()
 	if err := rangeCheck(port); err != nil {
-		return port, err
+		return 0, err
 	}
-	if err := v.assign(port); err != nil {
-		return port, err
+	port, err := v.assign(port)
+	if err != nil {
+		return 0, err
 	}
 	return port, nil
 }
@@ -94,12 +100,9 @@ func (v *vendor) del(port int) (int, error) {
 	v.Lock()
 	defer v.Unlock()
 	if err := rangeCheck(port); err != nil {
-		return port, err
+		return 0, err
 	}
 	v.Ports[port-minPort] = false
-	if port < v.Next {
-		v.Next = port
-	}
 	return port, nil
 }
 
@@ -142,7 +145,7 @@ func (v *vendor) delHandler(w http.ResponseWriter, r *http.Request) {
 
 func init() {
 	Ports := make([]bool, maxPort-minPort+1, maxPort-minPort+1)
-	V = &vendor{Ports: Ports, Next: minPort}
+	V = &vendor{Ports: Ports}
 	f, err := os.Open(config)
 	if err != nil {
 		if os.IsNotExist(err) {
