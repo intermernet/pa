@@ -29,7 +29,7 @@ var (
 
 	listen = ":3000"
 
-	config = "./config.json"
+	config = "./pa.json"
 
 	errInvalidRoute  = "Error: invalid route."
 	errInvalidMethod = "Error: method not allowed."
@@ -42,13 +42,6 @@ var (
 type vendor struct {
 	ports []bool
 	sync.Mutex
-}
-
-func rangeCheck(port int) error {
-	if port < minPort || port > maxPort {
-		return errPortOutOfRange
-	}
-	return nil
 }
 
 func (v *vendor) scan() (int, error) {
@@ -88,8 +81,8 @@ func (v *vendor) get() (int, error) {
 func (v *vendor) post(port int) (int, error) {
 	v.Lock()
 	defer v.Unlock()
-	if err := rangeCheck(port); err != nil {
-		return 0, err
+	if port < minPort || port > maxPort {
+		return 0, errPortOutOfRange
 	}
 	port, err := v.assign(port)
 	if err != nil {
@@ -101,8 +94,8 @@ func (v *vendor) post(port int) (int, error) {
 func (v *vendor) del(port int) (int, error) {
 	v.Lock()
 	defer v.Unlock()
-	if err := rangeCheck(port); err != nil {
-		return 0, err
+	if port < minPort || port > maxPort {
+		return 0, errPortOutOfRange
 	}
 	v.ports[port-minPort] = false
 	return port, nil
