@@ -11,10 +11,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"sync"
-
-	"github.com/gorilla/pat"
 )
 
 const (
@@ -24,43 +23,46 @@ const (
 )
 
 var (
-	V *vendor
-
-	portFormat = "/{port:[0-9]+}"
+	v          *vendor
+	portFormat = "^/{1}\\d{1,5}$"
+	portRegExp = regexp.MustCompile(portFormat)
 
 	listen = ":3000"
 
 	config = "./config.json"
 
-	ErrPortOutOfRange      = errors.New("Error: port out of range.")
-	ErrAllPortsAssigned    = errors.New("Error: all Ports assigned.")
-	ErrPortAlreadyAssigned = errors.New("Error: port is already assigned.")
+	errInvalidRoute  = "Error: invalid route."
+	errInvalidMethod = "Error: method not allowed."
+
+	errPortOutOfRange      = errors.New("Error: port out of range.")
+	errAllPortsAssigned    = errors.New("Error: all Ports assigned.")
+	errPortAlreadyAssigned = errors.New("Error: port is already assigned.")
 )
 
 type vendor struct {
-	Ports []bool
+	ports []bool
 	sync.Mutex
 }
 
 func rangeCheck(port int) error {
 	if port < minPort || port > maxPort {
-		return ErrPortOutOfRange
+		return errPortOutOfRange
 	}
 	return nil
 }
 
 func (v *vendor) scan() (int, error) {
-	for n, assigned := range v.Ports {
+	for n, assigned := range v.ports {
 		if !assigned {
 			return n, nil
 		}
 	}
-	return 0, ErrAllPortsAssigned
+	return 0, errAllPortsAssigned
 }
 
 func (v *vendor) assign(port int) (int, error) {
-	if port <= maxPort && v.Ports[port-minPort] {
-		return 0, ErrPortAlreadyAssigned
+	if port <= maxPort && v.ports[port-minPort] {
+		return 0, errPortAlreadyAssigned
 	}
 	if port == autoPort {
 		p, err := v.scan()
@@ -69,7 +71,7 @@ func (v *vendor) assign(port int) (int, error) {
 		}
 		port = p + minPort
 	}
-	v.Ports[port-minPort] = true
+	v.ports[port-minPort] = true
 	return port, nil
 }
 
@@ -102,50 +104,65 @@ func (v *vendor) del(port int) (int, error) {
 	if err := rangeCheck(port); err != nil {
 		return 0, err
 	}
-	v.Ports[port-minPort] = false
+	v.ports[port-minPort] = false
 	return port, nil
 }
 
-func (v *vendor) getHandler(w http.ResponseWriter, r *http.Request) {
-	port, err := v.get()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+func (v *vendor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch {
+	case r.URL.Path == "/":
+		if r.Method == "GET" {
+			port, err := v.get()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Write([]byte(fmt.Sprintf("%d", port)))
+			return
+		}
+		http.Error(w, errInvalidMethod, http.StatusMethodNotAllowed)
+		return
+	case portRegExp.Match([]byte(r.URL.Path)):
+		switch r.Method {
+		case "POST":
+			port, err := strconv.Atoi(r.URL.Query().Get(":port"))
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			port, err = v.post(port)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Write([]byte(fmt.Sprintf("%d", port)))
+			return
+		case "DELETE":
+			port, err := strconv.Atoi(r.URL.Query().Get(":port"))
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			port, err = v.del(port)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Write([]byte(fmt.Sprintf("%d", port)))
+			return
+		default:
+			http.Error(w, errInvalidMethod, http.StatusMethodNotAllowed)
+			return
+		}
+	default:
+		http.Error(w, errInvalidRoute, http.StatusNotFound)
 		return
 	}
-	w.Write([]byte(fmt.Sprintf("%d", port)))
-}
-
-func (v *vendor) postHandler(w http.ResponseWriter, r *http.Request) {
-	port, err := strconv.Atoi(r.URL.Query().Get(":port"))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	port, err = v.post(port)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Write([]byte(fmt.Sprintf("%d", port)))
-}
-
-func (v *vendor) delHandler(w http.ResponseWriter, r *http.Request) {
-	port, err := strconv.Atoi(r.URL.Query().Get(":port"))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	port, err = v.del(port)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Write([]byte(fmt.Sprintf("%d", port)))
 }
 
 func init() {
-	Ports := make([]bool, maxPort-minPort+1, maxPort-minPort+1)
-	V = &vendor{Ports: Ports}
+	ports := make([]bool, maxPort-minPort+1, maxPort-minPort+1)
+	v = &vendor{ports: ports}
 	f, err := os.Open(config)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -167,7 +184,7 @@ func init() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		err = json.Unmarshal(confJSON, &V)
+		err = json.Unmarshal(confJSON, &v)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -185,7 +202,7 @@ func main() {
 	go func() {
 		for _ = range c {
 			log.Println("Saving data...")
-			data, err := json.Marshal(V)
+			data, err := json.Marshal(v)
 			if err != nil {
 				log.Println(err)
 				os.Exit(1)
@@ -206,11 +223,7 @@ func main() {
 		}
 	}()
 
-	r := pat.New()
-	r.Get("/", http.HandlerFunc(V.getHandler))
-	r.Post(portFormat, http.HandlerFunc(V.postHandler))
-	r.Delete(portFormat, http.HandlerFunc(V.delHandler))
-	http.Handle("/", r)
+	http.Handle("/", v)
 	log.Printf("Listening on %s\n", listen)
 	if err := http.ListenAndServe(listen, nil); err != nil {
 		log.Fatalf("ListenAndServe: %s\n", err)
