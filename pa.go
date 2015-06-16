@@ -24,7 +24,7 @@ const (
 
 var (
 	v          *vendor
-	portFormat = "^/{1}\\d{1,5}$"
+	portFormat = "^/\\d{1,5}$"
 	portRegExp = regexp.MustCompile(portFormat)
 
 	listen = ":3000"
@@ -40,12 +40,12 @@ var (
 )
 
 type vendor struct {
-	ports []bool
+	Ports []bool `json:"ports"`
 	sync.Mutex
 }
 
 func (v *vendor) scan() (int, error) {
-	for n, assigned := range v.ports {
+	for n, assigned := range v.Ports {
 		if !assigned {
 			return n, nil
 		}
@@ -54,7 +54,7 @@ func (v *vendor) scan() (int, error) {
 }
 
 func (v *vendor) assign(port int) (int, error) {
-	if port <= maxPort && v.ports[port-minPort] {
+	if port <= maxPort && v.Ports[port-minPort] {
 		return 0, errPortAlreadyAssigned
 	}
 	if port == autoPort {
@@ -64,7 +64,7 @@ func (v *vendor) assign(port int) (int, error) {
 		}
 		port = p + minPort
 	}
-	v.ports[port-minPort] = true
+	v.Ports[port-minPort] = true
 	return port, nil
 }
 
@@ -97,7 +97,7 @@ func (v *vendor) del(port int) (int, error) {
 	if port < minPort || port > maxPort {
 		return 0, errPortOutOfRange
 	}
-	v.ports[port-minPort] = false
+	v.Ports[port-minPort] = false
 	return port, nil
 }
 
@@ -118,7 +118,7 @@ func (v *vendor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case portRegExp.Match([]byte(r.URL.Path)):
 		switch r.Method {
 		case "POST":
-			port, err := strconv.Atoi(r.URL.Query().Get(":port"))
+			port, err := strconv.Atoi(r.URL.Path[1:])
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -131,7 +131,7 @@ func (v *vendor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Write([]byte(fmt.Sprintf("%d", port)))
 			return
 		case "DELETE":
-			port, err := strconv.Atoi(r.URL.Query().Get(":port"))
+			port, err := strconv.Atoi(r.URL.Path[1:])
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -155,7 +155,7 @@ func (v *vendor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func init() {
 	ports := make([]bool, maxPort-minPort+1, maxPort-minPort+1)
-	v = &vendor{ports: ports}
+	v = &vendor{Ports: ports}
 	f, err := os.Open(config)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -168,18 +168,22 @@ func init() {
 			log.Fatal(err)
 		}
 	} else {
-		fi, err := f.Stat()
+		fStat, err := f.Stat()
 		if err != nil {
 			log.Fatal(err)
 		}
-		confJSON := make([]byte, fi.Size())
+		confJSON := make([]byte, fStat.Size())
 		_, err = f.Read(confJSON)
 		if err != nil {
 			log.Fatal(err)
 		}
 		err = json.Unmarshal(confJSON, &v)
 		if err != nil {
-			log.Fatal(err)
+			log.Printf("Config file corrupt (JSON Error: %s). Creating %s\n", err.Error(), config)
+			f, err = os.Create(config)
+			if err != nil {
+				log.Fatal(err)
+			}
 		}
 	}
 	err = f.Close()
@@ -189,36 +193,40 @@ func init() {
 }
 
 func main() {
-	c := make(chan os.Signal, 1)
-	defer close(c)
-	signal.Notify(c, os.Interrupt, os.Kill)
+	signalChan := make(chan os.Signal, 1)
+	quit := make(chan struct{})
+	defer close(signalChan)
+	defer close(quit)
+	signal.Notify(signalChan, os.Interrupt, os.Kill)
 	go func() {
-		for _ = range c {
+		for _ = range signalChan {
 			log.Println("Saving data...")
 			data, err := json.Marshal(v)
 			if err != nil {
-				log.Println(err)
-				os.Exit(1)
+				log.Fatal(err)
 			}
 			f, err := os.Create(config)
 			if err != nil {
-				log.Println(err)
-				os.Exit(1)
+				log.Fatal(err)
 			}
 			defer f.Close()
 			_, err = f.Write(data)
 			if err != nil {
-				log.Println(err)
-				os.Exit(1)
+				log.Fatal(err)
 			}
-			log.Println("Exiting.")
-			os.Exit(0)
+			log.Println("Data saved to", config)
+			quit <- struct{}{}
 		}
 	}()
-
 	http.Handle("/", v)
 	log.Printf("Listening on %s\n", listen)
-	if err := http.ListenAndServe(listen, nil); err != nil {
-		log.Fatalf("ListenAndServe: %s\n", err)
-	}
+	go func() {
+		if err := http.ListenAndServe(listen, nil); err != nil {
+			log.Fatalf("ListenAndServe: %s\n", err)
+		}
+	}()
+	log.Println("Press Ctrl-C to quit")
+	<-quit
+	log.Println("Exiting")
+	os.Exit(0)
 }
