@@ -6,6 +6,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -17,12 +18,14 @@ import (
 )
 
 const (
-	minPort  = 9000
-	maxPort  = 65535 // TCP/IP Limit
-	autoPort = maxPort + 1
+	limPort  = 65535 // TCP/IP Limit
+	autoPort = limPort + 1
 )
 
 var (
+	minPort int
+	maxPort int
+
 	v          *vendor
 	portFormat = "^/\\d{1,5}$"
 	portRegExp = regexp.MustCompile(portFormat)
@@ -33,6 +36,10 @@ var (
 
 	errInvalidRoute  = "Error: invalid route."
 	errInvalidMethod = "Error: method not allowed."
+
+	errMinOutOfRange = "Error: min out of range."
+	errMaxOutOfRange = "Error: max out of range."
+	errMinGTMax      = "Error: min cannot be greater than than max."
 
 	errPortOutOfRange      = errors.New("Error: port out of range.")
 	errAllPortsAssigned    = errors.New("Error: all Ports assigned.")
@@ -154,12 +161,24 @@ func (v *vendor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func init() {
+	flag.IntVar(&minPort, "min", 9000, "lowest TCP/IP Port to distribute")
+	flag.IntVar(&maxPort, "max", limPort, "highest TCP/IP Port to distribute")
+	flag.Parse()
+	if minPort < 1 {
+		log.Fatalf("%s\n", errMinOutOfRange)
+	}
+	if maxPort > limPort {
+		log.Fatalf("%s\n", errMaxOutOfRange)
+	}
+	if minPort > maxPort {
+		log.Fatalf("%s\n", errMinGTMax)
+	}
 	ports := make([]bool, maxPort-minPort+1, maxPort-minPort+1)
 	v = &vendor{Ports: ports}
 	f, err := os.Open(config)
 	if err != nil {
 		if os.IsNotExist(err) {
-			log.Printf("Config file not found. Creating %s\n", config)
+			log.Printf("Config file not found. Creating new config %s\n", config)
 			f, err = os.Create(config)
 			if err != nil {
 				log.Fatal(err)
@@ -179,7 +198,7 @@ func init() {
 		}
 		err = json.Unmarshal(confJSON, &v)
 		if err != nil {
-			log.Printf("Config file corrupt (JSON Error: %s). Creating %s\n", err.Error(), config)
+			log.Printf("Error reading config file: %s. Creating new config %s\n", err.Error(), config)
 			f, err = os.Create(config)
 			if err != nil {
 				log.Fatal(err)
