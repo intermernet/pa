@@ -46,6 +46,11 @@ var (
 	errPortAlreadyAssigned = errors.New("Error: port is already assigned.")
 )
 
+func internalServerError(w http.ResponseWriter, err error) {
+	http.Error(w, err.Error(), http.StatusInternalServerError)
+	return
+}
+
 type vendor struct {
 	Ports []bool `json:"ports"`
 	sync.Mutex
@@ -61,6 +66,8 @@ func (v *vendor) scan() (int, error) {
 }
 
 func (v *vendor) assign(port int) (int, error) {
+	v.Lock()
+	defer v.Unlock()
 	if port <= maxPort && v.Ports[port-minPort] {
 		return 0, errPortAlreadyAssigned
 	}
@@ -76,8 +83,6 @@ func (v *vendor) assign(port int) (int, error) {
 }
 
 func (v *vendor) get() (int, error) {
-	v.Lock()
-	defer v.Unlock()
 	port, err := v.assign(autoPort)
 	if err != nil {
 		return 0, err
@@ -86,8 +91,6 @@ func (v *vendor) get() (int, error) {
 }
 
 func (v *vendor) post(port int) (int, error) {
-	v.Lock()
-	defer v.Unlock()
 	if port < minPort || port > maxPort {
 		return 0, errPortOutOfRange
 	}
@@ -99,11 +102,11 @@ func (v *vendor) post(port int) (int, error) {
 }
 
 func (v *vendor) del(port int) (int, error) {
-	v.Lock()
-	defer v.Unlock()
 	if port < minPort || port > maxPort {
 		return 0, errPortOutOfRange
 	}
+	v.Lock()
+	defer v.Unlock()
 	v.Ports[port-minPort] = false
 	return port, nil
 }
@@ -114,7 +117,7 @@ func (v *vendor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "GET" {
 			port, err := v.get()
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				internalServerError(w, err)
 				return
 			}
 			w.Write([]byte(fmt.Sprintf("%d", port)))
@@ -127,12 +130,12 @@ func (v *vendor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "POST":
 			port, err := strconv.Atoi(r.URL.Path[1:])
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				internalServerError(w, err)
 				return
 			}
 			port, err = v.post(port)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				internalServerError(w, err)
 				return
 			}
 			w.Write([]byte(fmt.Sprintf("%d", port)))
@@ -140,12 +143,12 @@ func (v *vendor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "DELETE":
 			port, err := strconv.Atoi(r.URL.Path[1:])
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				internalServerError(w, err)
 				return
 			}
 			port, err = v.del(port)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				internalServerError(w, err)
 				return
 			}
 			w.Write([]byte(fmt.Sprintf("%d", port)))
@@ -192,12 +195,11 @@ func init() {
 			log.Fatal(err)
 		}
 		confJSON := make([]byte, fStat.Size())
-		_, err = f.Read(confJSON)
-		if err != nil {
+		if _, err = f.Read(confJSON); err != nil {
 			log.Fatal(err)
 		}
-		err = json.Unmarshal(confJSON, &v)
-		if err != nil {
+		log.Printf("Loading config from %s\n", config)
+		if err = json.Unmarshal(confJSON, &v); err != nil {
 			log.Printf("Error reading config file: %s. Creating new config %s\n", err.Error(), config)
 			f, err = os.Create(config)
 			if err != nil {
@@ -205,8 +207,7 @@ func init() {
 			}
 		}
 	}
-	err = f.Close()
-	if err != nil {
+	if err = f.Close(); err != nil {
 		log.Fatal(err)
 	}
 }
