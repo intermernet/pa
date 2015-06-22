@@ -20,7 +20,7 @@ import (
 
 const (
 	limPort  = 65535 // TCP/IP Limit
-	autoPort = 0
+	autoPort = 0     // Magic number for auto-assignment
 )
 
 var (
@@ -52,29 +52,64 @@ func internalServerError(w http.ResponseWriter, err error) {
 	return
 }
 
+// A vendor provides a array of uint32 (Ports).
+// Each array position > Ports[0] contains 0 or 1 depending
+// on if the port has been assigned.
+// Ports[0] holds the nominal next port to be assigned.
 type vendor struct {
-	Ports [limPort]uint32 `json:"ports"`
+	Ports [limPort + 1]uint32 `json:"ports"`
 }
 
+// onIffOff atomically updates a port to on,
+// if, and only if, the port was off.
+// It returns a boolean of the operation's success.
 func (v *vendor) onIffOff(port int) bool {
-	return atomic.CompareAndSwapUint32(&v.Ports[port-1], 0, 1)
+	return atomic.CompareAndSwapUint32(&v.Ports[port], 0, 1)
 }
 
+// offIffOn atomically updates a port to off,
+// even if it was already off.
 func (v *vendor) offIffOn(port int) {
-	atomic.CompareAndSwapUint32(&v.Ports[port-1], 1, 0)
+	atomic.StoreUint32(&v.Ports[port], 0)
 	return
 }
 
+// updateNext updates Ports[0] with the nominal
+// next port to be assigned.
+func (v *vendor) updateNext(i uint32) {
+	atomic.StoreUint32(&v.Ports[0], i)
+}
+
+// next assigns andreturns the next available port.
+// It will always initially try to assign the
+// port value held in Ports[0], but if it fails
+// will revert to a slower scan of all ports.
 func (v *vendor) next() (int, error) {
+	// Get "next" port.
+	np := int(v.Ports[0])
+	if np > maxPort {
+		return 0, errAllPortsAssigned
+	}
+	// Try assigning "next" port.
+	if v.onIffOff(int(v.Ports[0])) {
+		v.updateNext(v.Ports[0] + 1)
+		return np, nil
+	}
+	// That failed, so scan all ports and attempt to assign.
 	for n := range v.Ports[minPort:maxPort] {
-		np := n + minPort
+		np = n + minPort
 		if v.onIffOff(np) {
+			v.updateNext(uint32(np) + 1)
 			return np, nil
 		}
 	}
+	v.updateNext(uint32(maxPort) + 1)
 	return 0, errAllPortsAssigned
 }
 
+// assign assigns and returns a particular port.
+// If port == autoPort it will assign the next
+// available port.
 func (v *vendor) assign(port int) (int, error) {
 	if port == autoPort {
 		return v.next()
@@ -88,14 +123,19 @@ func (v *vendor) assign(port int) (int, error) {
 	return 0, errPortAlreadyAssigned
 }
 
+// release un-assigns and returns a particular port.
+// It will always return the port, even if it wasn't
+// previously assigned.
 func (v *vendor) release(port int) (int, error) {
 	if port < minPort || port > maxPort {
 		return 0, errPortOutOfRange
 	}
 	v.offIffOn(port)
+	v.updateNext(uint32(port))
 	return port, nil
 }
 
+// get handles GET operations.
 func (v *vendor) get() (int, error) {
 	port, err := v.assign(autoPort)
 	if err != nil {
@@ -104,6 +144,7 @@ func (v *vendor) get() (int, error) {
 	return port, nil
 }
 
+// post handles POST operations.
 func (v *vendor) post(port int) (int, error) {
 	port, err := v.assign(port)
 	if err != nil {
@@ -112,10 +153,12 @@ func (v *vendor) post(port int) (int, error) {
 	return port, nil
 }
 
+// del handles DELETE operations.
 func (v *vendor) del(port int) (int, error) {
 	return v.release(port)
 }
 
+// ServeHTTP satisfies the http.Handler interface.
 func (v *vendor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path == "/":
@@ -168,6 +211,7 @@ func (v *vendor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Parse all flags, load the config, do sanity checks and initialise the port vendor
 func init() {
 	flag.IntVar(&minPort, "min", 9000, "lowest TCP/IP Port to distribute (default=9000)")
 	flag.IntVar(&maxPort, "max", limPort, fmt.Sprintf("highest TCP/IP Port to distribute (default=%d)", limPort))
@@ -181,7 +225,7 @@ func init() {
 	if minPort > maxPort {
 		log.Fatalf("%s\n", errMinGTMax)
 	}
-	var ports [limPort]uint32
+	var ports [limPort + 1]uint32
 	v = &vendor{Ports: ports}
 	f, err := os.Open(config)
 	if err != nil {
@@ -215,6 +259,12 @@ func init() {
 	if err = f.Close(); err != nil {
 		log.Fatal(err)
 	}
+	if v.Ports[0] < uint32(minPort) {
+		v.Ports[0] = uint32(minPort)
+	}
+	if v.Ports[0] > uint32(maxPort)+1 {
+		v.Ports[0] = uint32(maxPort) + 1
+	}
 }
 
 func main() {
@@ -228,6 +278,7 @@ func main() {
 	defer close(signalChan)
 	defer close(quit)
 	signal.Notify(signalChan, os.Interrupt, os.Kill)
+	// Goroutine to listen for signals in order to save data and cleanup.
 	go func() {
 		for _ = range signalChan {
 			log.Println("Saving data...")
@@ -250,6 +301,7 @@ func main() {
 		}
 	}()
 	http.Handle("/", v)
+	// Run the server.
 	log.Printf("Listening on %s\n", listen)
 	go func() {
 		if err := server.ListenAndServe(); err != nil {
@@ -257,6 +309,7 @@ func main() {
 		}
 	}()
 	log.Println("Press Ctrl-C to quit")
+	// Wait for the cleanup to finish, then exit.
 	<-quit
 	log.Println("Exiting")
 	os.Exit(0)
