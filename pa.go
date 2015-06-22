@@ -14,19 +14,20 @@ import (
 	"os/signal"
 	"regexp"
 	"strconv"
-	"sync"
+	"sync/atomic"
+	"time"
 )
 
 const (
 	limPort  = 65535 // TCP/IP Limit
-	autoPort = limPort + 1
+	autoPort = 0
 )
 
 var (
-	minPort int
-	maxPort int
+	v *vendor
 
-	v          *vendor
+	minPort, maxPort int
+
 	portFormat = "^/\\d{1,5}$"
 	portRegExp = regexp.MustCompile(portFormat)
 
@@ -52,33 +53,46 @@ func internalServerError(w http.ResponseWriter, err error) {
 }
 
 type vendor struct {
-	Ports []bool `json:"ports"`
-	sync.Mutex
+	Ports [limPort]uint32 `json:"ports"`
 }
 
-func (v *vendor) scan() (int, error) {
-	for n, assigned := range v.Ports {
-		if !assigned {
-			return n, nil
+func (v *vendor) onIffOff(port int) bool {
+	return atomic.CompareAndSwapUint32(&v.Ports[port-1], 0, 1)
+}
+
+func (v *vendor) offIffOn(port int) {
+	atomic.CompareAndSwapUint32(&v.Ports[port-1], 1, 0)
+	return
+}
+
+func (v *vendor) next() (int, error) {
+	for n := range v.Ports[minPort:maxPort] {
+		np := n + minPort
+		if v.onIffOff(np) {
+			return np, nil
 		}
 	}
 	return 0, errAllPortsAssigned
 }
 
 func (v *vendor) assign(port int) (int, error) {
-	v.Lock()
-	defer v.Unlock()
-	if port <= maxPort && v.Ports[port-minPort] {
-		return 0, errPortAlreadyAssigned
-	}
 	if port == autoPort {
-		p, err := v.scan()
-		if err != nil {
-			return 0, err
-		}
-		port = p + minPort
+		return v.next()
 	}
-	v.Ports[port-minPort] = true
+	if port < minPort || port > maxPort {
+		return 0, errPortOutOfRange
+	}
+	if v.onIffOff(port) {
+		return port, nil
+	}
+	return 0, errPortAlreadyAssigned
+}
+
+func (v *vendor) release(port int) (int, error) {
+	if port < minPort || port > maxPort {
+		return 0, errPortOutOfRange
+	}
+	v.offIffOn(port)
 	return port, nil
 }
 
@@ -91,9 +105,6 @@ func (v *vendor) get() (int, error) {
 }
 
 func (v *vendor) post(port int) (int, error) {
-	if port < minPort || port > maxPort {
-		return 0, errPortOutOfRange
-	}
 	port, err := v.assign(port)
 	if err != nil {
 		return 0, err
@@ -102,13 +113,7 @@ func (v *vendor) post(port int) (int, error) {
 }
 
 func (v *vendor) del(port int) (int, error) {
-	if port < minPort || port > maxPort {
-		return 0, errPortOutOfRange
-	}
-	v.Lock()
-	defer v.Unlock()
-	v.Ports[port-minPort] = false
-	return port, nil
+	return v.release(port)
 }
 
 func (v *vendor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -164,8 +169,8 @@ func (v *vendor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func init() {
-	flag.IntVar(&minPort, "min", 9000, "lowest TCP/IP Port to distribute")
-	flag.IntVar(&maxPort, "max", limPort, "highest TCP/IP Port to distribute")
+	flag.IntVar(&minPort, "min", 9000, "lowest TCP/IP Port to distribute (default=9000)")
+	flag.IntVar(&maxPort, "max", limPort, fmt.Sprintf("highest TCP/IP Port to distribute (default=%d)", limPort))
 	flag.Parse()
 	if minPort < 1 {
 		log.Fatalf("%s\n", errMinOutOfRange)
@@ -176,7 +181,7 @@ func init() {
 	if minPort > maxPort {
 		log.Fatalf("%s\n", errMinGTMax)
 	}
-	ports := make([]bool, maxPort-minPort+1, maxPort-minPort+1)
+	var ports [limPort]uint32
 	v = &vendor{Ports: ports}
 	f, err := os.Open(config)
 	if err != nil {
@@ -213,6 +218,11 @@ func init() {
 }
 
 func main() {
+	server := &http.Server{
+		Addr:         listen,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
+	}
 	signalChan := make(chan os.Signal, 1)
 	quit := make(chan struct{})
 	defer close(signalChan)
@@ -234,13 +244,15 @@ func main() {
 				log.Fatal(err)
 			}
 			log.Println("Data saved to", config)
+			signal.Stop(signalChan)
+			server.SetKeepAlivesEnabled(false)
 			quit <- struct{}{}
 		}
 	}()
 	http.Handle("/", v)
 	log.Printf("Listening on %s\n", listen)
 	go func() {
-		if err := http.ListenAndServe(listen, nil); err != nil {
+		if err := server.ListenAndServe(); err != nil {
 			log.Fatalf("ListenAndServe: %s\n", err)
 		}
 	}()
