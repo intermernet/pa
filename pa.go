@@ -1,6 +1,5 @@
 // pa - Port Authority - controls port assignments, ensures port uniqueness
 // Copyright 2014 Mike Hughes intermernet AT gmail DOT com
-
 package main
 
 import (
@@ -35,21 +34,20 @@ var (
 
 	config = "./pa.json"
 
-	errInvalidRoute  = "Error: invalid route."
-	errInvalidMethod = "Error: method not allowed."
+	errInvalidRoute  = "error: invalid route"
+	errInvalidMethod = "error: method not allowed"
 
-	errMinOutOfRange = "Error: min out of range."
-	errMaxOutOfRange = "Error: max out of range."
-	errMinGTMax      = "Error: min cannot be greater than than max."
+	errMinOutOfRange = "error: min out of range"
+	errMaxOutOfRange = "error: max out of range"
+	errMinGTMax      = "error: min cannot be greater than than max"
 
-	errPortOutOfRange      = errors.New("Error: port out of range.")
-	errAllPortsAssigned    = errors.New("Error: all Ports assigned.")
-	errPortAlreadyAssigned = errors.New("Error: port is already assigned.")
+	errPortOutOfRange      = errors.New("error: port out of range")
+	errAllPortsAssigned    = errors.New("error: all Ports assigned")
+	errPortAlreadyAssigned = errors.New("error: port is already assigned")
 )
 
 func internalServerError(w http.ResponseWriter, err error) {
 	http.Error(w, err.Error(), http.StatusInternalServerError)
-	return
 }
 
 // A vendor provides an array of uint32 (Ports).
@@ -71,7 +69,6 @@ func (v *vendor) onIffOff(port int) bool {
 // even if it was already off.
 func (v *vendor) off(port int) {
 	atomic.StoreUint32(&v.Ports[port], 0)
-	return
 }
 
 // updateNext updates Ports[0] with the nominal
