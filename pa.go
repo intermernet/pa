@@ -280,7 +280,7 @@ func main() {
 	defer close(quit)
 	signal.Notify(signalChan, os.Interrupt, os.Kill)
 	go func() {
-		for _ = range signalChan {
+		for range signalChan {
 			log.Println("Saving data...")
 			data, err := json.Marshal(v)
 			if err != nil {
