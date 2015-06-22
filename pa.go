@@ -259,26 +259,29 @@ func init() {
 	if err = f.Close(); err != nil {
 		log.Fatal(err)
 	}
-	if v.Ports[0] < uint32(minPort) {
+	np := int(v.Ports[0])
+	switch {
+	case np < minPort:
 		v.Ports[0] = uint32(minPort)
-	}
-	if v.Ports[0] > uint32(maxPort)+1 {
+	case np > maxPort+1:
 		v.Ports[0] = uint32(maxPort) + 1
 	}
 }
 
 func main() {
+	// Create our server with conservative timeouts.
 	server := &http.Server{
 		Addr:         listen,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 5 * time.Second,
 	}
+
+	// Setup signal notifiers in order to save data and cleanup.
 	signalChan := make(chan os.Signal, 1)
 	quit := make(chan struct{})
 	defer close(signalChan)
 	defer close(quit)
 	signal.Notify(signalChan, os.Interrupt, os.Kill)
-	// Goroutine to listen for signals in order to save data and cleanup.
 	go func() {
 		for _ = range signalChan {
 			log.Println("Saving data...")
@@ -300,8 +303,9 @@ func main() {
 			quit <- struct{}{}
 		}
 	}()
+
+	// Set the handler and run the server.
 	http.Handle("/", v)
-	// Run the server.
 	log.Printf("Listening on %s\n", listen)
 	go func() {
 		if err := server.ListenAndServe(); err != nil {
@@ -309,6 +313,7 @@ func main() {
 		}
 	}()
 	log.Println("Press Ctrl-C to quit")
+
 	// Wait for the cleanup to finish, then exit.
 	<-quit
 	log.Println("Exiting")
