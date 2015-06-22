@@ -67,9 +67,9 @@ func (v *vendor) onIffOff(port int) bool {
 	return atomic.CompareAndSwapUint32(&v.Ports[port], 0, 1)
 }
 
-// offIffOn atomically updates a port to off,
+// off atomically updates a port to off,
 // even if it was already off.
-func (v *vendor) offIffOn(port int) {
+func (v *vendor) off(port int) {
 	atomic.StoreUint32(&v.Ports[port], 0)
 	return
 }
@@ -130,7 +130,7 @@ func (v *vendor) release(port int) (int, error) {
 	if port < minPort || port > maxPort {
 		return 0, errPortOutOfRange
 	}
-	v.offIffOn(port)
+	v.off(port)
 	v.updateNext(uint32(port))
 	return port, nil
 }
