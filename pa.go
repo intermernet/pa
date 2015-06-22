@@ -49,7 +49,6 @@ var (
 
 func internalServerError(w http.ResponseWriter, err error) {
 	http.Error(w, err.Error(), http.StatusInternalServerError)
-	return
 }
 
 // A vendor provides an array of uint32 (Ports).
@@ -71,7 +70,6 @@ func (v *vendor) onIffOff(port int) bool {
 // even if it was already off.
 func (v *vendor) off(port int) {
 	atomic.StoreUint32(&v.Ports[port], 0)
-	return
 }
 
 // updateNext updates Ports[0] with the nominal
