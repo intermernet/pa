@@ -52,7 +52,7 @@ func internalServerError(w http.ResponseWriter, err error) {
 	return
 }
 
-// A vendor provides a array of uint32 (Ports).
+// A vendor provides an array of uint32 (Ports).
 // Each array position > Ports[0] contains 0 or 1 depending
 // on if the port has been assigned.
 // Ports[0] holds the nominal next port to be assigned.
@@ -91,7 +91,7 @@ func (v *vendor) next() (int, error) {
 		return 0, errAllPortsAssigned
 	}
 	// Try assigning "next" port.
-	if v.onIffOff(int(v.Ports[0])) {
+	if v.onIffOff(np) {
 		v.updateNext(v.Ports[0] + 1)
 		return np, nil
 	}
