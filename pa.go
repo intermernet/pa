@@ -80,7 +80,7 @@ func (v *vendor) updateNext(i uint32) {
 	atomic.StoreUint32(&v.Ports[0], i)
 }
 
-// next assigns andreturns the next available port.
+// next assigns and returns the next available port.
 // It will always initially try to assign the
 // port value held in Ports[0], but if it fails
 // will revert to a slower scan of all ports.
