@@ -4,7 +4,7 @@ __pa - Port Authority__
 
 pa is a web service for managing the assignment of TCP/IP ports on a host.
 
-__WARNING: This program is also an excercise in concurrent access to lock-free data structures. It probably has race conditions, despite `go build -race` not complaining *USE AT OWN RISK!*__
+__WARNING: This program is also an exercise in concurrent access to lock-free data structures. It probably has race conditions, despite `go build -race` not complaining, *USE AT OWN RISK!*__
 
 It presents a very simple REST API at http://0.0.0.0:3000/ which can be used to get the next available port, request a specific port, or delete a port assignment.
 
