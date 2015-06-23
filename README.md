@@ -4,16 +4,19 @@ __pa - Port Authority__
 
 pa is a web service for managing the assignment of TCP/IP ports on a host.
 
+__WARNING: This program is also an excercise in concurrent access to lock-free data structures. It probably has race conditions, despite `go build -race` not complaining *USE AT OWN RISK!*__
+
 It presents a very simple REST API at http://0.0.0.0:3000/ which can be used to get the next available port, request a specific port, or delete a port assignment.
 
-It will save any port assignments in a config file (`config.json`) when it exits, and reload them again on start-up.
+It will save any port assignments in a config file (`pa.json`) when it exits, and reload them again on start-up.
 
 Example usage:
 
     $ pa
 
-    2014/12/09 15:37:29 Config file not found. Creating ./config.json
-    2014/12/09 15:37:29 Listening on :3000
+    2015/06/23 16:49:26 Config file not found. Creating new config ./pa.json
+    2015/06/23 16:49:26 Listening on :3000
+    2015/06/23 16:49:26 Press Ctrl-C to quit
 
     $ curl http://localhost:3000/ # Request the next un-assigned port
     9000
@@ -24,4 +27,4 @@ Example usage:
     $ curl -XDELETE http://localhost:3000/10080 # Delete a port assignment
     10080
 
-The port limits are currently hardcoded to the range of 9000 - 65535 (TCP/IP maximum port value).
+The port limits can be set with the `-min` and `-max` flags. They default to `-min=9000` and `-max=65535`.
