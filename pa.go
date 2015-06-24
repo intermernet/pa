@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"runtime"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -83,7 +84,7 @@ func (v *vendor) updateNext(i uint32) {
 // will revert to a slower scan of all ports.
 func (v *vendor) next() (int, error) {
 	// Get "next" port.
-	np := int(v.Ports[0])
+	np := int(atomic.LoadUint32(&v.Ports[0]))
 	if np > maxPort {
 		return 0, errAllPortsAssigned
 	}
@@ -210,6 +211,7 @@ func (v *vendor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // Parse all flags, load the config, do sanity checks and initialise the port vendor
 func init() {
+	runtime.GOMAXPROCS(runtime.NumCPU())
 	flag.IntVar(&minPort, "min", 9000, "lowest TCP/IP Port to distribute (default=9000)")
 	flag.IntVar(&maxPort, "max", limPort, fmt.Sprintf("highest TCP/IP Port to distribute (default=%d)", limPort))
 	flag.Parse()
