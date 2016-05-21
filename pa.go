@@ -1,6 +1,6 @@
 // pa - Port Authority - controls port assignments, ensures port uniqueness
 // Copyright 2014 Mike Hughes intermernet AT gmail DOT com
-package main // import "intermer.net/go/pa"
+package main
 
 import (
 	"encoding/json"
